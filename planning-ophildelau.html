@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,sans-serif;font-size:13px;background:#f5f5f5;padding:16px;}
+.planning-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.nav-btn{background:#fff;border:1px solid #ccc;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:13px;transition:background 0.2s;}
+.nav-btn:hover{background:#eee;}
+.periode-label{font-size:14px;font-weight:bold;color:#333;}
+.legende{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
+.legende-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;}
+.legende-dot{width:14px;height:14px;border-radius:3px;}
+.chambre-bloc{background:#fff;border:1px solid #ddd;border-radius:8px;margin-bottom:20px;overflow:hidden;}
+.chambre-titre{background:#5a3e28;color:#fff;padding:10px 16px;font-size:14px;font-weight:bold;display:flex;align-items:center;gap:10px;}
+.dot-chambre{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+.mois-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;}
+@media(max-width:900px){.mois-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:500px){.mois-grid{grid-template-columns:1fr;}}
+.mois-bloc{border-right:1px solid #eee;padding:10px;}
+.mois-bloc:last-child{border-right:none;}
+.mois-nom{font-size:13px;font-weight:bold;color:#333;text-align:center;margin-bottom:8px;text-transform:capitalize;}
+.mois-annee{font-size:11px;color:#888;font-weight:normal;}
+.cal-table{width:100%;border-collapse:collapse;}
+.cal-table th{font-size:10px;color:#888;text-align:center;padding:3px 1px;font-weight:normal;}
+.cal-table td{text-align:center;padding:2px 1px;}
+.jour{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:4px;font-size:11px;cursor:default;}
+.jour.dispo{background:#c8e6c9;color:#2e7d32;}
+.jour.occupe{background:#ffcdd2;color:#c62828;}
+.jour.passe{background:#f5f5f5;color:#ccc;}
+.jour.vide{background:transparent;color:transparent;}
+.jour.aujourd-hui{outline:2px solid #5a3e28;outline-offset:1px;font-weight:bold;}
+.loading{text-align:center;padding:20px;color:#888;font-style:italic;font-size:12px;}
+.erreur{text-align:center;padding:16px;color:#c62828;font-size:12px;}
+</style>
+</head>
+<body>
+
+<div class="planning-header">
+  <button class="nav-btn" onclick="naviguer(-1)">&#8249; Précédent</button>
+  <span class="periode-label" id="periode-label"></span>
+  <button class="nav-btn" onclick="naviguer(1)">Suivant &#8250;</button>
+</div>
+
+<div class="legende">
+  <div class="legende-item">
+    <div class="legende-dot" style="background:#c8e6c9;border:1px solid #a5d6a7;"></div>
+    <span>Disponible</span>
+  </div>
+  <div class="legende-item">
+    <div class="legende-dot" style="background:#ffcdd2;border:1px solid #ef9a9a;"></div>
+    <span>Réservé</span>
+  </div>
+  <div class="legende-item">
+    <div class="legende-dot" style="background:#f5f5f5;border:1px solid #e0e0e0;"></div>
+    <span>Passé</span>
+  </div>
+</div>
+
+<div id="planning-container"></div>
+
+<script>
+var ICAL_BASE = {
+  campagne: "https://calendar.google.com/calendar/ical/7ed3011e584dd3b58b21653ea60ab01553a2975feb6c6d858d46e0093cbf6985%40group.calendar.google.com/public/basic.ics",
+  zen:      "https://calendar.google.com/calendar/ical/9936e437b1c86cbe6a6731fefbfe5a358f3808d00521a09a7303ebe03a5dec4e%40group.calendar.google.com/public/basic.ics",
+  marine:   "https://calendar.google.com/calendar/ical/0920e21ed0406bfd7800d970a91af01fb8ca63802dd237d4cfad8f57a0d69b24%40group.calendar.google.com/public/basic.ics",
+  kenya:    "https://calendar.google.com/calendar/ical/f4d23996fa2052a35289f4bbbcc5a664e5e9f07b6827622ec2454459e762a9ab%40group.calendar.google.com/public/basic.ics"
+};
+
+var PROXIES = [
+  "https://corsproxy.io/?",
+  "https://api.allorigins.win/raw?url=",
+  "https://api.codetabs.com/v1/proxy?quest="
+];
+
+var CHAMBRES = [
+  { nom: "Chambre Campagne", couleur: "#E67C35", key: "campagne" },
+  { nom: "Chambre Zen",      couleur: "#4285F4", key: "zen"      },
+  { nom: "Chambre Marine",   couleur: "#0F9D58", key: "marine"   },
+  { nom: "Tente Kénya",      couleur: "#8E44AD", key: "kenya"    }
+];
+
+var moisDepart = 0;
+var datesOccupees = {};
+var jours = ['lun','mar','mer','jeu','ven','sam','dim'];
+var moisNoms = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+var aujourdhui = new Date();
+aujourdhui.setHours(0,0,0,0);
+
+function dateStr(d){
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+function parseIcal(txt){
+  var dates = new Set();
+  var lines = txt.replace(/\r\n /g,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  var inEvent=false, dtstart=null, dtend=null;
+  for(var i=0;i<lines.length;i++){
+    var l=lines[i].trim();
+    if(l==='BEGIN:VEVENT'){inEvent=true;dtstart=null;dtend=null;}
+    if(l==='END:VEVENT'){
+      if(inEvent&&dtstart&&dtend){
+        var d=new Date(dtstart), fin=new Date(dtend);
+        while(d<fin){dates.add(dateStr(d));d.setDate(d.getDate()+1);}
+      }
+      inEvent=false;
+    }
+    if(inEvent){
+      if(l.match(/^DTSTART/)){
+        var v=l.split(':').slice(1).join(':').replace(/T.*/,'');
+        dtstart=v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8);
+      }
+      if(l.match(/^DTEND/)){
+        var v2=l.split(':').slice(1).join(':').replace(/T.*/,'');
+        dtend=v2.slice(0,4)+'-'+v2.slice(4,6)+'-'+v2.slice(6,8);
+      }
+    }
+  }
+  return dates;
+}
+
+function fetchProxy(url, proxyIdx){
+  if(proxyIdx >= PROXIES.length){
+    return Promise.reject(new Error('Tous les proxies ont échoué'));
+  }
+  var proxyUrl;
+  if(proxyIdx === 1){
+    proxyUrl = PROXIES[proxyIdx] + encodeURIComponent(url);
+  } else {
+    proxyUrl = PROXIES[proxyIdx] + url;
+  }
+  return fetch(proxyUrl)
+    .then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.text();
+    })
+    .then(function(txt){
+      if(!txt.includes('VCALENDAR')) throw new Error('Réponse invalide');
+      return txt;
+    })
+    .catch(function(e){
+      return fetchProxy(url, proxyIdx+1);
+    });
+}
+
+function chargerIcal(idx){
+  var url = ICAL_BASE[CHAMBRES[idx].key];
+  fetchProxy(url, 0)
+    .then(function(txt){
+      datesOccupees[idx] = parseIcal(txt);
+      afficher();
+    })
+    .catch(function(){
+      datesOccupees[idx] = null;
+      afficher();
+    });
+}
+
+function getMoisRef(offset){
+  return new Date(aujourdhui.getFullYear(), aujourdhui.getMonth()+offset, 1);
+}
+
+function genererMois(annee, mois, occ){
+  var premier=new Date(annee,mois,1), dernier=new Date(annee,mois+1,0);
+  var premierJour=(premier.getDay()+6)%7;
+  var html='<table class="cal-table"><tr>';
+  jours.forEach(function(j){html+='<th>'+j+'</th>';});
+  html+='</tr>';
+  var jour=1, semaines=Math.ceil((premierJour+dernier.getDate())/7);
+  for(var s=0;s<semaines;s++){
+    html+='<tr>';
+    for(var col=0;col<7;col++){
+      var pos=s*7+col;
+      if(pos<premierJour||jour>dernier.getDate()){
+        html+='<td><span class="jour vide">0</span></td>';
+      }else{
+        var da=new Date(annee,mois,jour), ds=dateStr(da);
+        var isToday=ds===dateStr(aujourdhui);
+        var isPast=da<aujourdhui;
+        var isOcc=occ&&occ.has(ds);
+        var cls='jour'+(isPast?' passe':isOcc?' occupe':' dispo')+(isToday?' aujourd-hui':'');
+        html+='<td><span class="'+cls+'">'+jour+'</span></td>';
+        jour++;
+      }
+    }
+    html+='</tr>';
+  }
+  return html+'</table>';
+}
+
+function afficher(){
+  var m1=getMoisRef(moisDepart), m4=getMoisRef(moisDepart+3);
+  document.getElementById('periode-label').textContent=
+    moisNoms[m1.getMonth()]+' '+m1.getFullYear()+' — '+
+    moisNoms[m4.getMonth()]+' '+m4.getFullYear();
+
+  var html='';
+  CHAMBRES.forEach(function(ch,idx){
+    var occ=datesOccupees[idx];
+    html+='<div class="chambre-bloc">';
+    html+='<div class="chambre-titre">';
+    html+='<div class="dot-chambre" style="background:'+ch.couleur+'"></div>';
+    html+=ch.nom;
+    html+='</div>';
+
+    if(occ===undefined){
+      html+='<div class="loading">Chargement des disponibilités...</div>';
+    }else if(occ===null){
+      html+='<div class="erreur">Impossible de charger les disponibilités pour cet hébergement.</div>';
+    }else{
+      html+='<div class="mois-grid">';
+      for(var m=0;m<4;m++){
+        var ref=getMoisRef(moisDepart+m);
+        html+='<div class="mois-bloc">';
+        html+='<div class="mois-nom">'+moisNoms[ref.getMonth()]+' <span class="mois-annee">'+ref.getFullYear()+'</span></div>';
+        html+=genererMois(ref.getFullYear(),ref.getMonth(),occ);
+        html+='</div>';
+      }
+      html+='</div>';
+    }
+    html+='</div>';
+  });
+  document.getElementById('planning-container').innerHTML=html;
+}
+
+function naviguer(dir){
+  moisDepart+=dir;
+  afficher();
+}
+
+afficher();
+CHAMBRES.forEach(function(ch,idx){ chargerIcal(idx); });
+</script>
+</body>
+</html>
