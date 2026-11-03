@@ -1,0 +1,29 @@
+name: Mise à jour iCal
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # toutes les heures
+  workflow_dispatch:        # déclenchement manuel possible
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger les calendriers iCal
+        run: |
+          mkdir -p ical
+
+          curl -sL "https://calendar.google.com/calendar/ical/7ed3011e584dd3b58b21653ea60ab01553a2975feb6c6d858d46e0093cbf6985%40group.calendar.google.com/public/basic.ics" -o ical/campagne.ics
+          curl -sL "https://calendar.google.com/calendar/ical/9936e437b1c86cbe6a6731fefbfe5a358f3808d00521a09a7303ebe03a5dec4e%40group.calendar.google.com/public/basic.ics" -o ical/zen.ics
+          curl -sL "https://calendar.google.com/calendar/ical/0920e21ed0406bfd7800d970a91af01fb8ca63802dd237d4cfad8f57a0d69b24%40group.calendar.google.com/public/basic.ics" -o ical/marine.ics
+          curl -sL "https://calendar.google.com/calendar/ical/f4d23996fa2052a35289f4bbbcc5a664e5e9f07b6827622ec2454459e762a9ab%40group.calendar.google.com/public/basic.ics" -o ical/kenya.ics
+
+      - name: Commit et push si modifié
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ical/
+          git diff --staged --quiet || git commit -m "iCal mis à jour $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push
